@@ -1,6 +1,7 @@
 #include <iostream>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -10,6 +11,38 @@ void save_to_history(const std::string& msg) {
     std::ofstream file("chat_log.txt", std::ios::app);
     if (file.is_open()) {
         file << msg << std::endl;
+    }
+}
+
+void handle_client(int client_sock) {
+    char buffer[512];
+    while (true) {
+        int bytes = recv(client_sock, buffer, sizeof(buffer) - 1, 0);
+        if (bytes <= 0) {
+            std::cout << "[-] Клиент отключился\n";
+            close(client_sock);
+            return;
+        }
+        buffer[bytes] = '\0';
+        std::string msg(buffer);
+        if (!msg.empty() && msg.back() == '\n') {
+            msg.pop_back();
+        }
+        std::cout << "Клиент: " << msg << "\n";
+        save_to_history("Клиент: " + msg);
+        std::string reply;
+        if (msg == "ping") {
+            reply = "pong";
+        } else {
+            reply = msg;
+        }
+        save_to_history("Сервер: " + reply);
+        std::string wire = reply + "\n";
+        if (send(client_sock, wire.c_str(), wire.size(), 0) <= 0) {
+            perror("send");
+            close(client_sock);
+            return;
+        }
     }
 }
 
@@ -30,8 +63,7 @@ int main() {
         close(listener);
         return 1;
     }
-    
-    if (listen(listener, 1) < 0) {
+    if (listen(listener, 10) < 0) {
         perror("listen");
         close(listener);
         return 1;
@@ -44,42 +76,9 @@ int main() {
             continue;
         }
         std::cout << "[+] Клиент подключился\n";
-		bool flag = true;
-        char buffer[512];
-        while (true) {
-            int bytes = recv(client_sock, buffer, sizeof(buffer) - 1, 0);
-            if (bytes <= 0) {
-                std::cout << "[-] Клиент отключился\n";
-                close(client_sock);
-                flag = false;
-                break;
-            }
-			buffer[bytes] = '\0';
-            std::string msg(buffer);
-            if (!msg.empty() && msg.back() == '\n') {
-                msg.pop_back();
-            }
-            std::cout << "Клиент: " << msg << "\n";
-            save_to_history("Клиент: " + msg);
-            std::string reply;
-            if (msg == "ping") {
-                reply = "pong";
-            } else {
-                reply = msg;
-            }
-            save_to_history("Сервер: " + reply);
-            std::string wire = reply + "\n";
-            if (send(client_sock, wire.c_str(), wire.size(), 0) <= 0) {
-                perror("send");
-                close(client_sock);
-                flag = false;
-                break;
-            }
-        }
-        if (!flag) {
-        	break;
-        }
+        std::thread(handle_client, client_sock).detach();
     }
+    
     close(listener);
     return 0;
 }
